@@ -99,6 +99,51 @@ struct Sum:public variant<Ts...>
 	Sum(T&& t): variant<Ts...>(std::forward<T>(t)){}
 };
 
+template<class ...Ts>
+struct already_exist
+{
+	static constexpr bool value = false;
+};
+
+template<class T0, class T1, class ...Ts>
+struct already_exist<Sum<T1,Ts...>, T0>
+{
+	static constexpr bool value = std::is_same<T1, T0>::value || already_exist<Sum<Ts...>, T0>::value;
+};
+
+template<class T1, class T2>
+struct already_exist<Sum<T1>, T2>
+{
+	static constexpr bool value = std::is_same<T1, T2>::value;
+};
+
+template<class T1, class T2>
+struct MakeSum
+{
+	using type = Sum<T1,T2>;
+};
+
+template<class T>
+struct MakeSum<T, T>
+{
+	using type = T;
+};
+
+template< class ...Ts, class T0>
+struct MakeSum<Sum<Ts...>, T0>
+{
+	using type = std::conditional_t<already_exist<Sum<Ts...>, T0>::value, Sum<Ts...>, Sum<T0, Ts...>>;
+};
+
+template<class T1, class T2>
+struct MakeSum<Sum<T1>, T2>
+{
+	using type = std::conditional_t<std::is_same<T1, T2>::value, Sum<T1>, Sum<T1,T2>>;
+};
+
+template<class T1, class T2>
+using sum_type = typename MakeSum<T1,T2>::type;
+
 template<typename T>
 class Combinator
 {
@@ -113,7 +158,7 @@ public:
 	template<typename C2>
 	auto operator+(C2&& c2) 
 	{
-		using Prod = product_type<T, typename std::remove_reference_t<C2>::val_type>;
+		using Prod = product_type<T, typename std::decay_t<C2>::val_type>;
 		return Combinator<Prod>( [p1=_fn_ptr, p2 = c2.getFn()](const string_view& sv) 
 		{
 			auto& f1 = *p1;
@@ -122,6 +167,20 @@ public:
 			if(!r1) return Result<Prod>{};
 			auto r2 = f2(r1._rest);
 			return r2? Result<Prod>{Prod(r1._val, r2._val), r2._rest}: Result<Prod>{};
+		});
+	}
+
+	template<typename C2>
+	auto operator|(C2&& c2)
+	{
+		using SumT = sum_type<val_type, typename std::decay_t<C2>::val_type>;
+		
+		return Combinator<SumT>( [p1=_fn_ptr, p2 = c2.getFn()](const string_view& sv) 
+		{
+			auto r1 = (*p1)(sv);
+			if(r1) return Result<SumT>{r1._val, r1._rest};
+			auto r2 = (*p2)(sv);
+			return r2? Result<SumT>{r2._val, r2._rest}: Result<SumT>{};
 		});
 	}
 

@@ -1,5 +1,6 @@
 #include "ParserCombinator.hpp"
 #include <iostream>
+#include <cassert>
 
 using  std::cout;
 using  std::endl;
@@ -24,11 +25,45 @@ Parser<string_view>	operator ""_T(const char* c, size_t len)
 }
 
 
-int main()
+void TEST_Product()
 {
+	static_assert(std::is_same<product_type<int, int>, Product<int,int>>::value, "");
+	static_assert(std::is_same<product_type<int, std::string>, Product<int,std::string>>::value, "");
+	static_assert(std::is_same<product_type<Product<int,char>, std::string>, Product<int,char,std::string>>::value, "");
 	Combinator<int> number{Parser<int>(parseNumber)};
 	Combinator<string_view> op{Parser<string_view>("+"_T)};
 	auto exp = number + op + number >> [](int i, string_view, int j){ return i + j; };
-	auto res = exp("12+3");
-	cout << res._val << endl;
+	assert(exp("12+3")._val == 15);
+}
+
+void TEST_Sum()
+{
+	static_assert(std::is_same<sum_type<int, std::string>, Sum<int,std::string>>::value, "");
+	static_assert(std::is_same<sum_type<Sum<int,char>,int>, Sum<int,char>>::value, "");
+	
+	Combinator<int> number{Parser<int>(parseNumber)};
+	Combinator<string_view> add{"+"_T}, minus{"-"_T}, mul{"*"_T}, div{"/"_T};
+	auto exp = (number + (add|minus|mul|div) + number )>> [](int i, string_view sv, int j) {
+		if(sv == "+") return i + j;
+		else if(sv == "*") return i * j;
+		else if(sv == "-") return i - j;
+		else if(sv == "/") return i / j;
+		return -10086;
+	};
+	assert(exp("10+15")._val == 25);
+	assert(exp("11*11")._val == 121);
+	assert(exp("23-12")._val == 11);
+	assert(!exp("88^66"));
+}
+
+void TEST_Calculator()
+{
+	//TODO
+}
+
+int main()
+{
+	TEST_Product();
+	TEST_Sum();
+	TEST_Calculator();
 }
