@@ -2,9 +2,6 @@
 #include <iostream>
 #include <cassert>
 
-using  std::cout;
-using  std::endl;
-
 Result<int> parseNumber(const string_view& sv)
 {
 	int num = 0;
@@ -13,15 +10,15 @@ Result<int> parseNumber(const string_view& sv)
 	return i == 0? Result<int>{} : Result<int>(num, sv.substr(i));
 }
 
-Parser<string_view>	operator ""_T(const char* c, size_t len)
+Combinator<string_view>	operator ""_T(const char* c, size_t len)
 {
-	return [=](const string_view& sv)
+	return Combinator<string_view>( [=](const string_view& sv)
 	{
 		size_t i;
 		for(i = 0; i < sv.size() && i < len && sv[i] == c[i]; ++i)
 			;
 		return i < sv.size() && i != 0? Result<string_view>(string_view(c, i), sv.substr(i)): Result<string_view>{};
-	};
+	});
 }
 
 
@@ -31,7 +28,7 @@ void TEST_Product()
 	static_assert(std::is_same<product_type<int, std::string>, Product<int,std::string>>::value, "");
 	static_assert(std::is_same<product_type<Product<int,char>, std::string>, Product<int,char,std::string>>::value, "");
 	Combinator<int> number{Parser<int>(parseNumber)};
-	Combinator<string_view> op{Parser<string_view>("+"_T)};
+	Combinator<string_view> op = "+"_T;
 	auto exp = number + op + number >> [](int i, string_view, int j){ return i + j; };
 	assert(exp("12+3")._val == 15);
 }
@@ -58,7 +55,22 @@ void TEST_Sum()
 
 void TEST_Calculator()
 {
-	//TODO
+	Combinator<int> number{Parser<int>{parseNumber}};
+	Combinator<int> expr, multive, factor;
+	expr = (multive + ("+"_T|"-"_T) + multive) >> [](int i, string_view op, int j) { 
+		if(op == "+") return i+j;
+		else if(op == "-") return i-j;
+		return -10086;
+	};
+	multive = factor + ("*"_T|"/"_T) + factor >> [](int i, string_view op, int j) {
+		if(op == "*") return i*j;
+		else if(op == "/") return i/j;
+		return 0;
+	};
+	factor = number | (("("_T + expr + ")"_T) >> [](string_view,int i,string_view)
+	{
+		return i;
+	});
 }
 
 int main()

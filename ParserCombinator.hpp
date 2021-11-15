@@ -97,6 +97,12 @@ struct Sum:public variant<Ts...>
 	Sum()=default;
 	template<typename T>
 	Sum(T&& t): variant<Ts...>(std::forward<T>(t)){}
+	template<typename Fn>
+	constexpr decltype(auto) operator>>(Fn&& fn)
+	{
+		return boost::apply_visitor(*this, fn);
+	}
+
 };
 
 template<class ...Ts>
@@ -144,6 +150,19 @@ struct MakeSum<Sum<T1>, T2>
 template<class T1, class T2>
 using sum_type = typename MakeSum<T1,T2>::type;
 
+template<class T>
+struct is_sum_type { static constexpr bool value = false; };
+
+template<class ...Ts>
+struct is_sum_type<Sum<Ts...>> { static constexpr bool value = true; };
+
+template<class T>
+struct is_product_type { static constexpr bool value = false; };
+
+template<class ...Ts>
+struct is_product_type<Product<Ts...>> { static constexpr bool value = true; };
+static_assert(is_product_type<Product<int,string_view>>::value,"");
+
 template<typename T>
 class Combinator
 {
@@ -185,14 +204,19 @@ public:
 	}
 
 	template<typename Fn>
-	auto operator>>(Fn&& fn) 
+	auto operator>>(Fn&& fn)
 	{
-		return [parser=_fn_ptr, fn = std::forward<Fn>(fn)](const string_view& sv)
+
+		//using CT = std::conditional_t<is_product_type<T>::value || is_sum_type<T>::value,
+		//	  std::decay_t<decltype(std::declval<T>() >> fn)>,
+		//	  std::decay_t<decltype(fn(std::declval<T>()))>>;
+
+		using CT = std::decay_t<decltype(T() >> fn)>;
+		return Combinator<CT>( [parser=_fn_ptr, fn = std::forward<Fn>(fn)](const string_view& sv)
 		{
 			auto r = (*parser)(sv);
-			using NT = std::decay_t<decltype(r._val >> fn)>;
-			return r? Result<NT>{r._val >> fn, r._rest}: Result<NT>{};
-		};
+			return r? Result<CT>{r._val >> fn, r._rest}: Result<CT>{};
+		} );
 	}
 
 	const auto& getFn() { return _fn_ptr; }
@@ -201,4 +225,4 @@ private:
 };
 
 Result<int> parseNumber(const string_view& sv);
-Parser<string_view>	operator ""_T(const char* c, size_t);
+Combinator<string_view>	operator ""_T(const char* c, size_t);
