@@ -167,8 +167,11 @@ template<typename T>
 class Combinator
 {
 public:
-	Combinator()=default;
-	Combinator(Parser<T> p): _fn_ptr(std::make_shared<Parser<T>>(std::move(p))) {}
+	Combinator():_fn_ptr(std::make_shared<Parser<T>>()){} ;
+	Combinator(Parser<T> p):Combinator() { *_fn_ptr = std::move(p); }
+	Combinator(Combinator& c):Combinator() { *_fn_ptr = *c._fn_ptr; }
+	Combinator(Combinator&& c):Combinator() { *_fn_ptr = std::move(*c._fn_ptr); }
+	Combinator& operator=(Combinator c) { *_fn_ptr = std::move(*c._fn_ptr); return *this; }
 
 	using val_type = T;
 
