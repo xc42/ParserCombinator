@@ -1,26 +1,9 @@
 #include "ParserCombinator.hpp"
+#include <cctype>
 #include <iostream>
 #include <cassert>
 
-Result<int> parseNumber(const string_view& sv)
-{
-	int num = 0;
-	size_t i;
-	for(i = 0; i < sv.size() && isdigit(sv[i]); ++i) num = num * 10 + sv[i] - '0';
-	return i == 0? Result<int>{} : Result<int>(num, sv.substr(i));
-}
-
-Combinator<string_view>	operator ""_T(const char* c, size_t len)
-{
-	return Combinator<string_view>( [=](const string_view& sv)
-	{
-		size_t i;
-		for(i = 0; i < sv.size() && i < len && sv[i] == c[i]; ++i)
-			;
-		return i == len ? Result<string_view>(string_view(c, i), sv.substr(i)): Result<string_view>{};
-	});
-}
-
+using namespace std;
 
 void TEST_Product()
 {
@@ -28,7 +11,7 @@ void TEST_Product()
 	static_assert(std::is_same<product_type<int, int>, Product<int,int>>::value, "");
 	static_assert(std::is_same<product_type<int, std::string>, Product<int,std::string>>::value, "");
 	static_assert(std::is_same<product_type<Product<int,char>, std::string>, Product<int,char,std::string>>::value, "");
-	Combinator<int> number{Parser<int>(parseNumber)};
+	Combinator<int> number = numberPC();
 	Combinator<string_view> op = "+"_T;
 	auto exp = number + op + number >> [](int i, string_view, int j){ return i + j; };
 	assert(exp("12+3")._val == 15);
@@ -41,7 +24,7 @@ void TEST_Sum()
 	static_assert(std::is_same<sum_type<int, std::string>, Sum<int,std::string>>::value, "");
 	static_assert(std::is_same<sum_type<Sum<int,char>,int>, Sum<int,char>>::value, "");
 	
-	Combinator<int> number{Parser<int>(parseNumber)};
+	Combinator<int> number =  numberPC();
 	Combinator<string_view> add{"+"_T}, minus{"-"_T}, mul{"*"_T}, div{"/"_T};
 	auto exp = (number + (add|minus|mul|div) + number )>> [](int i, string_view sv, int j) {
 		if(sv == "+") return i + j;
@@ -60,7 +43,7 @@ void TEST_Sum()
 void TEST_Calculator()
 {
 	std::cout << "Run Test: " << __FUNCTION__ << std::endl;
-	Combinator<int> number{Parser<int>{parseNumber}};
+	Combinator<int> number = numberPC();
 	Combinator<int> expr, multive, factor;
 	expr = (multive + ("+"_T|"-"_T) + expr) >> [](int i, string_view op, int j) { 
 		if(op == "+") return i+j;
@@ -72,7 +55,7 @@ void TEST_Calculator()
 		else if(op == "/") return i/j;
 		return 0;
 	}|factor;
-	factor = ("("_T + expr + ")"_T) >> [](string_view,int i,string_view) { return i; }|number;
+	factor = ("("_T + expr + ")"_T) >> [](PlaceHolder, int i, PlaceHolder) { return i; }|number;
 
 	assert(expr("1314")._val == 1314);
 	assert(expr("(1314)")._val == 1314);
@@ -83,6 +66,43 @@ void TEST_Calculator()
 	assert(expr("10*3-2*5")._val == 20);
 	assert(expr("10*(5-2)+3")._val == 33);
 	std::cout << "Run Test Complete: " << __FUNCTION__ << std::endl;
+}
+
+void TEST_TC_Config()
+{
+
+	struct TC_Config
+	{
+	public:
+		struct Content {
+			map<string_view, string_view>		_dict;
+			vector<shared_ptr<TC_Config>>		_subdomain;
+		};
+
+		TC_Config(const string_view& tag, Content ctt): _tag(tag), _content(std::move(ctt)) {}
+
+		void addKV(const pair<string,string>& kv) {
+			_content._dict.insert(kv.first, kv.second);
+		}
+
+		Content								_content;
+		string								_tag;
+	};
+
+
+	Combinator<TC_Config> 			doc;
+	Combinator<TC_Config::Content>  content;
+	Combinator<string_view>			opentag, closetag;
+	Combinator<pair<string_view,string_view>>	kv;
+	Combinator<string_view>				alphanum = makePC(::isalnum);
+
+	doc = opentag + content + closetag >> [](string_view ot, TC_Config::Content ctt, string_view ct) { return TC_Config{ot, std::move(ctt)}; };
+
+	content = kv + content >> [](pair<string_view,string_view> kv, TC_Config::Content& ctt) { ctt.addKV(kv); }
+		| doc + content >> [](TC_Config subdo
+	//kv = ignoreBlank(alphanum) + "="_T + ignoreBlank(alphanum) >> [](string_view k, PlaceHolder, string_view v) { return make_pair(k,v); };
+	opentag = "<"_T + alphanum + ">"_T >> [](PlaceHolder, string_view tag,PlaceHolder) { return tag; };
+	closetag = "</"_T + alphanum + ">"_T >> [](PlaceHolder, string_view tag,PlaceHolder) { return tag; };
 }
 
 int main()

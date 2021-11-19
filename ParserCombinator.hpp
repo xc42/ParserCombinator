@@ -1,10 +1,13 @@
 #include <boost/variant.hpp>
 #include <boost/utility/string_view.hpp>
+#include <boost/optional.hpp>
+#include <cctype>
 #include <tuple>
 #include <functional>
 
 using boost::variant;
 using boost::string_view;
+using boost::optional;
 using std::tuple;
 
 template<typename T>
@@ -15,7 +18,8 @@ struct Result
 	T				_val;
 
 	Result(): _succ(false) {}
-	Result(const T& val, const string_view& sv):_succ(true), _rest(sv), _val(val) {}
+	Result(T val, const string_view& sv):_succ(true), _rest(sv), _val(std::move(val)) {}
+	Result(const string_view& sv): _succ(false), _rest(sv){}
 
 	operator bool() const{ return _succ; }
 	bool operator!() const { return !_succ; }
@@ -163,6 +167,12 @@ template<class ...Ts>
 struct is_product_type<Product<Ts...>> { static constexpr bool value = true; };
 static_assert(is_product_type<Product<int,string_view>>::value,"");
 
+struct PlaceHolder
+{
+	template<typename T>
+	PlaceHolder(T&&) {}
+};
+
 template<typename T>
 class Combinator
 {
@@ -186,9 +196,9 @@ public:
 			auto& f1 = *p1;
 			auto& f2 = *p2;
 			auto r1 = f1(sv);
-			if(!r1) return Result<Prod>{};
+			if(!r1) return Result<Prod>{sv};
 			auto r2 = f2(r1._rest);
-			return r2? Result<Prod>{Prod(r1._val, r2._val), r2._rest}: Result<Prod>{};
+			return r2? Result<Prod>{Prod(r1._val, r2._val), r2._rest}: Result<Prod>{sv};
 		});
 	}
 
@@ -202,7 +212,7 @@ public:
 			auto r1 = (*p1)(sv);
 			if(r1) return Result<SumT>{r1._val, r1._rest};
 			auto r2 = (*p2)(sv);
-			return r2? Result<SumT>{r2._val, r2._rest}: Result<SumT>{};
+			return r2? Result<SumT>{r2._val, r2._rest}: Result<SumT>{sv};
 		});
 	}
 
@@ -222,10 +232,100 @@ public:
 		} );
 	}
 
+	/*
+	Combinator<std::vector<T>> operator++(int)  //repeat many times
+	{
+		return [f=*this](const string_view& sv)
+		{
+			std::vector<T> res;
+			auto ri = f(sv);
+			auto rj = ri;
+			for(; ri; ) {
+				res.emplace_bakc(std::move(ri._val));
+				auto rj = f(ri._rest);
+				if(!rj) break;
+				ri = std::move(rj);
+			}
+			return res;
+		};
+	}
+	*/
+
 	const auto& getFn() { return _fn_ptr; }
 private:
 	std::shared_ptr<Parser<T>> _fn_ptr;
 };
 
-Result<int> parseNumber(const string_view& sv);
-Combinator<string_view>	operator ""_T(const char* c, size_t);
+template<class T>
+Combinator<optional<T>> maybe(Combinator<T> c)
+{
+	return [f=std::move(c)](const string_view& sv)
+	{
+		auto r = f(sv);
+		if(!r) r._succ = true;
+		return Result<optional<T>>{optional<T>(std::move(r._val)), r._rest};
+	};
+}
+
+template<class ChPred>
+Combinator<string_view> makePC(ChPred&& f)
+{
+	return Combinator<string_view>{ [f=std::forward<ChPred>(f)](const string_view& sv) {
+		size_t i = 0;
+		for(; i < sv.size() && f(sv[i]); ++i);
+		return i == 0? Result<string_view>{sv}: Result<string_view>{sv.substr(0,i), sv.substr(i)};
+	}};
+}
+
+template<class CB>
+auto dropBlank(CB&& f)
+{
+	static auto blank = makePC(isspace);
+	using T = typename CB::val_type;
+	return (blank + f + blank) >> [](PlaceHolder, T val, PlaceHolder) { return std::move(val); };
+}
+
+template<class CB>
+auto ignoreBlank(CB&& f)
+{
+	static auto blank = makePC(isspace);
+	using T = typename CB::val_type;
+	return (maybe(blank) + f + maybe(blank)) >> [](PlaceHolder, T val, PlaceHolder) { return std::move(val); };
+}
+
+
+inline Combinator<int> numberPC()
+{
+	return Combinator<int>{[](const string_view& sv) {
+			int num = 0;
+			size_t i;
+			for(i = 0; i < sv.size() && isdigit(sv[i]); ++i) num = num * 10 + sv[i] - '0';
+			return i == 0? Result<int>{sv} : Result<int>(num, sv.substr(i));
+	}};
+}
+
+inline Combinator<string_view>	operator ""_T(const char* c, size_t len)
+{
+	return Combinator<string_view>( [=](const string_view& sv)
+	{
+		size_t i;
+		for(i = 0; i < sv.size() && i < len && sv[i] == c[i]; ++i)
+			;
+		return i == len ? Result<string_view>(string_view(c, i), sv.substr(i)): Result<string_view>{sv};
+	});
+}
+
+
+inline Combinator<string_view> identifierPC()
+{
+	return Combinator<string_view>{ [](const string_view& sv) {
+		if(sv.empty()) return Result<string_view>{sv};
+
+		if(sv[0] == '_' || std::isalpha(sv[0])) {
+			size_t i = 1;
+			for(; i < sv.size() && std::isalnum(sv[i]); ++i);
+			return Result<string_view>{sv.substr(0, i), sv.substr(i)};
+		}
+		return Result<string_view>{sv};
+	}};
+}
